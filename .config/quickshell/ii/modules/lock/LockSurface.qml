@@ -1,10 +1,13 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell.Services.UPower
 import qs
 import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.modules.common.functions
+import qs.modules.bar as Bar
+import Quickshell.Services.SystemTray
 
 MouseArea {
     id: root
@@ -12,17 +15,26 @@ MouseArea {
     property bool active: false
     property bool showInputField: active || context.currentText.length > 0
 
+    // Force focus on entry
     function forceFieldFocus() {
         passwordBox.forceActiveFocus();
     }
-
     Connections {
         target: context
         function onShouldReFocus() {
             forceFieldFocus();
         }
     }
+    hoverEnabled: true
+    acceptedButtons: Qt.LeftButton
+    onPressed: mouse => {
+        forceFieldFocus();
+    }
+    onPositionChanged: mouse => {
+        forceFieldFocus();
+    }
 
+    // Toolbar appearing animation
     property real toolbarScale: 0.9
     property real toolbarOpacity: 0
     Behavior on toolbarScale {
@@ -36,29 +48,21 @@ MouseArea {
         animation: Appearance.animation.elementMoveFast.numberAnimation.createObject(this)
     }
 
+    // Init
     Component.onCompleted: {
         forceFieldFocus();
         toolbarScale = 1;
         toolbarOpacity = 1;
     }
 
-    Keys.onPressed: event => { // Esc to clear
-        if (event.key === Qt.Key_Escape) {
+    // Key presses
+    Keys.onPressed: event => {
+        root.context.resetClearTimer();
+        if (event.key === Qt.Key_Escape) { // Esc to clear
             root.context.currentText = "";
         }
         forceFieldFocus();
     }
-
-    hoverEnabled: true
-    acceptedButtons: Qt.LeftButton
-    onPressed: mouse => {
-        forceFieldFocus();
-    }
-    onPositionChanged: mouse => {
-        forceFieldFocus();
-    }
-
-    anchors.fill: parent
 
     // RippleButton {
     //     anchors {
@@ -75,7 +79,7 @@ MouseArea {
     //     }
     // }
 
-    // Controls
+    // Main toolbar: password box
     Toolbar {
         id: mainIsland
         anchors {
@@ -112,6 +116,10 @@ MouseArea {
                     passwordBox.text = root.context.currentText;
                 }
             }
+
+            Keys.onPressed: event => {
+                root.context.resetClearTimer();
+            }
         }
 
         ToolbarButton {
@@ -134,30 +142,115 @@ MouseArea {
         }
     }
 
+    // Left toolbar
     Toolbar {
+        id: leftIsland
         anchors {
             right: mainIsland.left
             top: mainIsland.top
             bottom: mainIsland.bottom
-            rightMargin: 20
+            rightMargin: 10
+        }
+        scale: root.toolbarScale
+        opacity: root.toolbarOpacity
+
+        // Username
+        RowLayout {
+            spacing: 6
+            Layout.leftMargin: 8
+            Layout.fillHeight: true
+
+            MaterialSymbol {
+                id: userIcon
+                Layout.alignment: Qt.AlignVCenter
+                fill: 1
+                text: "account_circle"
+                iconSize: Appearance.font.pixelSize.huge
+                color: Appearance.colors.colOnSurfaceVariant
+            }
+            StyledText {
+                Layout.alignment: Qt.AlignVCenter
+                text: SystemInfo.username
+                color: Appearance.colors.colOnSurfaceVariant
+            }
+        }
+
+        // Keyboard layout (Xkb)
+        Loader {
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            Layout.fillHeight: true
+
+            active: true
+            visible: active
+
+            sourceComponent: RowLayout {
+                spacing: 8
+
+                MaterialSymbol {
+                    id: keyboardIcon
+                    Layout.alignment: Qt.AlignVCenter
+                    fill: 1
+                    text: "keyboard_alt"
+                    iconSize: Appearance.font.pixelSize.huge
+                    color: Appearance.colors.colOnSurfaceVariant
+                }
+                Loader {
+                    sourceComponent: StyledText {
+                        text: HyprlandXkb.currentLayoutCode
+                        color: Appearance.colors.colOnSurfaceVariant
+                        animateChange: true
+                    }
+                }
+            }
+        }
+
+        // Keyboard layout (Fcitx)
+        Bar.SysTray {
+            Layout.rightMargin: 10
+            Layout.alignment: Qt.AlignVCenter
+            showSeparator: false
+            showOverflowMenu: false
+            pinnedItems: SystemTray.items.values.filter(i => i.id == "Fcitx")
+            visible: pinnedItems.length > 0
+        }
+    }
+
+    // Right toolbar
+    Toolbar {
+        id: rightIsland
+        anchors {
+            left: mainIsland.right
+            top: mainIsland.top
+            bottom: mainIsland.bottom
+            leftMargin: 10
         }
 
         scale: root.toolbarScale
         opacity: root.toolbarOpacity
 
-        ToolbarButton {
-            id: powerButton
-            implicitWidth: height
+        RowLayout {
+            visible: UPower.displayDevice.isLaptopBattery
+            spacing: 6
+            Layout.fillHeight: true
+            Layout.leftMargin: 10
+            Layout.rightMargin: 10
 
-            onClicked: Session.poweroff()
-
-            contentItem: MaterialSymbol {
-                anchors.centerIn: parent
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                iconSize: 24
-                text: "power_settings_new"
-                color: Appearance.colors.colOnSurfaceVariant
+            MaterialSymbol {
+                id: boltIcon
+                Layout.alignment: Qt.AlignVCenter
+                Layout.leftMargin: -2
+                Layout.rightMargin: -2
+                fill: 1
+                text: Battery.isCharging ? "bolt" : "battery_android_full"
+                iconSize: Appearance.font.pixelSize.huge
+                animateChange: true
+                color: (Battery.isLow && !Battery.isCharging) ? Appearance.colors.colError : Appearance.colors.colOnSurfaceVariant
+            }
+            StyledText {
+                Layout.alignment: Qt.AlignVCenter
+                text: Math.round(Battery.percentage * 100)
+                color: (Battery.isLow && !Battery.isCharging) ? Appearance.colors.colError : Appearance.colors.colOnSurfaceVariant
             }
         }
 
@@ -177,26 +270,20 @@ MouseArea {
             }
         }
 
-        RowLayout {
-            spacing: 6
-            Layout.fillHeight: true
-            Layout.leftMargin: 10
-            Layout.rightMargin: 10
+        ToolbarButton {
+            id: powerButton
+            implicitWidth: height
 
-            MaterialSymbol {
-                id: boltIcon
-                Layout.alignment: Qt.AlignVCenter
-                Layout.leftMargin: -2
-                Layout.rightMargin: -2
-                fill: 1
-                text: Battery.isCharging ? "bolt" : "battery_android_full"
-                iconSize: Appearance.font.pixelSize.huge
-                animateChange: true
+            onClicked: Session.poweroff()
+
+            contentItem: MaterialSymbol {
+                anchors.centerIn: parent
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                iconSize: 24
+                text: "power_settings_new"
+                color: Appearance.colors.colOnSurfaceVariant
             }
-            StyledText {
-                Layout.alignment: Qt.AlignVCenter
-                text: (Battery.percentage * 100)
-            }
-        }        
+        }
     }
 }
